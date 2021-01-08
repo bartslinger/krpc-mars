@@ -278,9 +278,11 @@ impl<T, U, V> RPCEncodable for (T, U, V)
 {
     fn encode(&self, output: &mut protobuf::CodedOutputStream) -> Result<(), protobuf::ProtobufError> {
         let &(ref t, ref u, ref v) = self;
-        t.encode(output)?;
-        u.encode(output)?;
-        v.encode(output)?;
+        let mut tuple = krpc::Tuple::new();
+        tuple.items.push(t.encode_to_bytes()?);
+        tuple.items.push(u.encode_to_bytes()?);
+        tuple.items.push(v.encode_to_bytes()?);
+        tuple.write_to(output)?;
         Ok(())
     }
 }
