@@ -265,8 +265,10 @@ impl<T, U> RPCEncodable for (T, U)
 {
     fn encode(&self, output: &mut protobuf::CodedOutputStream) -> Result<(), protobuf::ProtobufError> {
         let &(ref t, ref u) = self;
-        t.encode(output)?;
-        u.encode(output)?;
+        let mut tuple = krpc::Tuple::new();
+        tuple.items.push(t.encode_to_bytes()?);
+        tuple.items.push(u.encode_to_bytes()?);
+        tuple.write_to(output)?;
         Ok(())
     }
 }
@@ -295,10 +297,12 @@ impl<T, U, V, W> RPCEncodable for (T, U, V, W)
 {
     fn encode(&self, output: &mut protobuf::CodedOutputStream) -> Result<(), protobuf::ProtobufError> {
         let &(ref t, ref u, ref v, ref w) = self;
-        t.encode(output)?;
-        u.encode(output)?;
-        v.encode(output)?;
-        w.encode(output)?;
+        let mut tuple = krpc::Tuple::new();
+        tuple.items.push(t.encode_to_bytes()?);
+        tuple.items.push(u.encode_to_bytes()?);
+        tuple.items.push(v.encode_to_bytes()?);
+        tuple.items.push(w.encode_to_bytes()?);
+        tuple.write_to(output)?;
         Ok(())
     }
 }
