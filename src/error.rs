@@ -1,6 +1,5 @@
 use std::io;
 use std::fmt;
-use std::error;
 use std::result;
 
 use krpc;
@@ -71,30 +70,3 @@ impl fmt::Display for Error {
     }
 }
 
-impl error::Error for Error {
-    fn description(&self) -> &str {
-        match self {
-            Error::RPCConnect    { ref error, .. } => error.as_str(),
-            Error::StreamConnect { ref error, .. } => error.as_str(),
-            Error::Io(ref err)               => err.description(),
-            Error::Request(ref err)   => err.get_description(),
-            Error::Procedure(ref err) => err.get_description(),
-            Error::Protobuf(ref err)  => err.description(),
-            Error::NoSuchStream              => "Stream not found",
-            _ => unreachable!(),
-        }
-    }
-
-    fn cause(&self) -> Option<&error::Error> {
-        match self {
-            Error::RPCConnect { .. }     => None,
-            Error::StreamConnect { .. }  => None,
-            Error::Io(ref err)           => Some(err),
-            Error::Request(_)            => None,
-            Error::Procedure(_)          => None,
-            Error::Protobuf(ref err)     => Some(err),
-            Error::NoSuchStream          => None,
-            _ => unreachable!(),
-        }
-    }
-}

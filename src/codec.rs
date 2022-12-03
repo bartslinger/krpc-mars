@@ -308,11 +308,11 @@ impl<T, U, V, W> RPCEncodable for (T, U, V, W)
 }
 
 
-pub fn read_message<M>(sock: &mut Read) -> Result<M, protobuf::ProtobufError>
+pub fn read_message<M>(sock: &mut dyn Read) -> Result<M, protobuf::ProtobufError>
     where M: protobuf::Message
 {
     let mut input_stream = protobuf::CodedInputStream::new(sock);
-    protobuf::parse_length_delimited_from::<M>(&mut input_stream)
+    M::parse_from(&mut input_stream)
 }
 
 
