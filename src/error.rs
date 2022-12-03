@@ -2,7 +2,7 @@ use std::io;
 use std::fmt;
 use std::result;
 
-use krpc;
+use crate::krpc;
 use protobuf;
 
 #[derive(Debug)]

@@ -1,5 +1,5 @@
-use krpc;
-use error::Error;
+use crate::krpc;
+use crate::error::Error;
 
 use protobuf;
 use protobuf::Message;
