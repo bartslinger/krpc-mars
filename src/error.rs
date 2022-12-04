@@ -1,18 +1,23 @@
-use std::io;
 use std::fmt;
+use std::io;
 use std::result;
 
 use crate::krpc;
 use protobuf;
 
 #[derive(Debug)]
-pub enum Error
-{
+pub enum Error {
     /// Raised when the connection to the RPC server fails.
-    RPCConnect { error: String, status: krpc::ConnectionResponse_Status },
+    RPCConnect {
+        error: String,
+        status: krpc::ConnectionResponse_Status,
+    },
 
     /// Raised when the connection to the stream server fails.
-    StreamConnect { error: String, status: krpc::ConnectionResponse_Status },
+    StreamConnect {
+        error: String,
+        status: krpc::ConnectionResponse_Status,
+    },
 
     /// A synchronization error. Mutexes are used to ensure that responses are not mixed together
     /// so this should only be raised when one mutex is poisoned.
@@ -40,33 +45,59 @@ pub enum Error
 
 pub type Result<T> = result::Result<T, Error>;
 
-
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Error::RPCConnect { ref error, ref status } => {
-                write!(f, "Could not connect to the RPC server: {:?} {}", status, error.as_str())
-            },
-            Error::StreamConnect { ref error, ref status } => {
-                write!(f, "Could not connect to the stream server: {:?} {}", status, error.as_str())
-            },
+            Error::RPCConnect {
+                ref error,
+                ref status,
+            } => {
+                write!(
+                    f,
+                    "Could not connect to the RPC server: {:?} {}",
+                    status,
+                    error.as_str()
+                )
+            }
+            Error::StreamConnect {
+                ref error,
+                ref status,
+            } => {
+                write!(
+                    f,
+                    "Could not connect to the stream server: {:?} {}",
+                    status,
+                    error.as_str()
+                )
+            }
             Error::Io(ref err) => {
                 write!(f, "IO error: {}", err)
-            },
+            }
             Error::Request(ref err) => {
-                write!(f, "The RPC request failed: service={} procedure={} description={}", err.get_service(), err.get_name(), err.get_description())
-            },
+                write!(
+                    f,
+                    "The RPC request failed: service={} procedure={} description={}",
+                    err.get_service(),
+                    err.get_name(),
+                    err.get_description()
+                )
+            }
             Error::Procedure(ref err) => {
-                write!(f, "The RPC failed: service={} procedure={} description={}", err.get_service(), err.get_name(), err.get_description())
-            },
+                write!(
+                    f,
+                    "The RPC failed: service={} procedure={} description={}",
+                    err.get_service(),
+                    err.get_name(),
+                    err.get_description()
+                )
+            }
             Error::Protobuf(ref err) => {
                 write!(f, "Protobuf error: {}", err)
-            },
+            }
             Error::NoSuchStream => {
                 write!(f, "No result for this stream")
-            },
+            }
             _ => unreachable!(),
         }
     }
 }
-
