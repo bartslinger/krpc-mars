@@ -1,53 +1,31 @@
-pub extern crate protobuf;
-use bytes::BufMut;
-use protobuf::CodedInputStream;
-use protobuf::Message;
-
+pub use prost;
+use prost::Message;
 pub mod codec;
 pub mod error;
-pub mod krpc;
 use error::Error;
 use error::Result;
 
-use std::collections::HashMap;
+use bytes::BytesMut;
+// use std::collections::HashMap;
 use std::marker::PhantomData;
-use std::net::TcpStream;
-use std::net::ToSocketAddrs;
-use std::sync::Arc;
-use std::sync::Mutex;
 
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 
-#[derive(Debug)]
-struct RPCClient_ {
-    sock: Mutex<TcpStream>, //We must ensure that no two write happen concurrently
-    client_id: Vec<u8>,
+pub mod krpc {
+    include!(concat!(env!("OUT_DIR"), "/krpc.schema.rs"));
 }
 
-/// A client to a RPC server.
-#[derive(Clone, Debug)]
-pub struct RPCClient(Arc<RPCClient_>);
-
-#[derive(Debug)]
-struct StreamClient_ {
-    sock: Mutex<TcpStream>,
-}
-
-/// A client to a Stream server.
-#[derive(Clone)]
-pub struct StreamClient(Arc<StreamClient_>);
-
-type StreamID = u64;
+// type StreamID = u64;
 
 /// An async client to a RPC server.
-pub struct AsyncRPCClient {}
+pub struct RPCClient {}
 
 #[doc(hidden)]
 /// Represents a request that can be submitted to the RPCServer. Library users should not have to
 /// use this object directly.
 #[derive(Clone)]
 pub struct RPCRequest {
-    calls: protobuf::RepeatedField<krpc::ProcedureCall>,
+    calls: Vec<krpc::ProcedureCall>,
 }
 
 /// Represents a procedure call. The type parameter is the type of the value to be extracted from
@@ -58,18 +36,18 @@ pub struct CallHandle<T> {
     _phantom: PhantomData<T>,
 }
 
-/// A handle to a stream. The type parameter is the type of the value produced by the stream.
-#[derive(Copy, Clone, Debug)]
-pub struct StreamHandle<T> {
-    stream_id: StreamID,
-    _phantom: PhantomData<T>,
-}
-
-/// A collection of updates received from the stream server.
-#[derive(Debug)]
-pub struct StreamUpdate {
-    updates: HashMap<StreamID, krpc::ProcedureResult>,
-}
+// /// A handle to a stream. The type parameter is the type of the value produced by the stream.
+// #[derive(Copy, Clone, Debug)]
+// pub struct StreamHandle<T> {
+//     stream_id: StreamID,
+//     _phantom: PhantomData<T>,
+// }
+//
+// /// A collection of updates received from the stream server.
+// #[derive(Debug)]
+// pub struct StreamUpdate {
+//     updates: HashMap<StreamID, krpc::ProcedureResult>,
+// }
 
 #[doc(hidden)]
 #[macro_export]
@@ -132,112 +110,26 @@ macro_rules! batch_call_unwrap {
 /// Note that types don't prevent you from chaining multiple `mk_stream`. This will build a stream
 /// request of a stream request. Turns out this is accepted by the RPC server and the author of
 /// this library confesses he had some fun with this.
-pub fn mk_stream<T: codec::RPCExtractable>(call: &CallHandle<T>) -> CallHandle<StreamHandle<T>> {
-    let mut arg = krpc::Argument::new();
-    arg.set_position(0);
-    arg.set_value(call.get_call().write_to_bytes().unwrap());
-
-    let mut arguments = protobuf::RepeatedField::<krpc::Argument>::new();
-    arguments.push(arg);
-
-    let mut proc_call = krpc::ProcedureCall::new();
-    proc_call.set_service(String::from("KRPC"));
-    proc_call.set_procedure(String::from("AddStream"));
-    proc_call.set_arguments(arguments);
-
-    CallHandle::<StreamHandle<T>>::new(proc_call)
-}
+// pub fn mk_stream<T: codec::RPCExtractable>(call: &CallHandle<T>) -> CallHandle<StreamHandle<T>> {
+//     let arg = krpc::Argument {
+//         position: 0,
+//         value: call.get_call().encode_to_vec(),
+//     };
+//
+//     let mut arguments = Vec::<krpc::Argument>::new();
+//     arguments.push(arg);
+//
+//     let proc_call = krpc::ProcedureCall {
+//         service: "KRPC".to_string(),
+//         procedure: "AddStream".to_string(),
+//         arguments,
+//         ..Default::default()
+//     };
+//
+//     CallHandle::<StreamHandle<T>>::new(proc_call)
+// }
 
 impl RPCClient {
-    pub fn connect<A: ToSocketAddrs>(client_name: &str, addr: A) -> Result<Self> {
-        let mut sock = TcpStream::connect(addr).map_err(Error::Io)?;
-
-        let mut conn_req = krpc::ConnectionRequest::new();
-        conn_req.set_field_type(krpc::ConnectionRequest_Type::RPC);
-        conn_req.set_client_name(client_name.to_string());
-
-        conn_req
-            .write_length_delimited_to_writer(&mut sock)
-            .map_err(Error::Protobuf)?;
-
-        let mut response =
-            codec::read_message::<krpc::ConnectionResponse>(&mut sock).map_err(Error::Protobuf)?;
-
-        match response.status {
-            krpc::ConnectionResponse_Status::OK => Ok(RPCClient(Arc::new(RPCClient_ {
-                sock: Mutex::new(sock),
-                client_id: response.client_identifier,
-            }))),
-            s => Err(Error::RPCConnect {
-                error: response.take_message(),
-                status: s,
-            }),
-        }
-    }
-
-    pub fn mk_call<T: codec::RPCExtractable>(&self, call: &CallHandle<T>) -> Result<T> {
-        let (result,) = batch_call!(self, (call))?;
-        result
-    }
-
-    pub fn submit_request(&self, request: RPCRequest) -> Result<krpc::Response> {
-        let raw_request = request.build();
-        if let Ok(mut sock_guard) = self.0.sock.lock() {
-            raw_request
-                .write_length_delimited_to_writer(&mut *sock_guard)
-                .map_err(Error::Protobuf)?;
-            codec::read_message::<krpc::Response>(&mut *sock_guard).map_err(Error::Protobuf)
-        } else {
-            Err(Error::Synchro(String::from("Poisoned mutex")))
-        }
-    }
-}
-
-impl StreamClient {
-    pub fn connect<A: ToSocketAddrs>(client: &RPCClient, addr: A) -> Result<Self> {
-        let mut sock = TcpStream::connect(addr).map_err(Error::Io)?;
-
-        let mut conn_req = krpc::ConnectionRequest::new();
-        conn_req.set_field_type(krpc::ConnectionRequest_Type::STREAM);
-        conn_req.set_client_identifier(client.0.client_id.clone());
-
-        conn_req
-            .write_length_delimited_to_writer(&mut sock)
-            .map_err(Error::Protobuf)?;
-
-        let mut response =
-            codec::read_message::<krpc::ConnectionResponse>(&mut sock).map_err(Error::Protobuf)?;
-
-        match response.status {
-            krpc::ConnectionResponse_Status::OK => Ok(StreamClient(Arc::new(StreamClient_ {
-                sock: Mutex::new(sock),
-            }))),
-            s => Err(Error::StreamConnect {
-                error: response.take_message(),
-                status: s,
-            }),
-        }
-    }
-
-    pub fn recv_update(&self) -> Result<StreamUpdate> {
-        let updates;
-        if let Ok(mut sock_guard) = self.0.sock.lock() {
-            updates = codec::read_message::<krpc::StreamUpdate>(&mut *sock_guard)
-                .map_err(Error::Protobuf)?;
-        } else {
-            return Err(Error::Synchro(String::from("Poinsoned mutex")));
-        }
-
-        let mut map = HashMap::new();
-        for mut result in updates.results.into_iter() {
-            map.insert(result.id, result.take_result());
-        }
-
-        Ok(StreamUpdate { updates: map })
-    }
-}
-
-impl AsyncRPCClient {
     pub async fn connect(client_name: &str, addr: impl tokio::net::ToSocketAddrs) -> Result<Self> {
         let socket = tokio::net::TcpStream::connect(addr)
             .await
@@ -246,74 +138,61 @@ impl AsyncRPCClient {
         let (mut socket_reader, mut socket_writer) = socket.into_split();
 
         // Create a connection request
-        let mut conn_req = krpc::ConnectionRequest::new();
-        conn_req.set_field_type(krpc::ConnectionRequest_Type::RPC);
-        conn_req.set_client_name(client_name.to_string());
+        let conn_req = krpc::ConnectionRequest {
+            r#type: krpc::connection_request::Type::Rpc as i32,
+            client_name: client_name.to_string(),
+            ..Default::default()
+        };
 
-        let encoded_req = conn_req
-            .write_length_delimited_to_bytes()
-            .map_err(Error::Protobuf)?;
+        let mut buf = BytesMut::new();
+        conn_req.encode(&mut buf).map_err(Error::EncodeError)?;
 
-        socket_writer
-            .write_all(&encoded_req)
-            .await
-            .map_err(Error::Io)?;
+        socket_writer.write_all(&buf).await.map_err(Error::Io)?;
 
         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-        let mut read_buffer = bytes::BytesMut::new();
-        let count = socket_reader
-            .read_buf(&mut read_buffer)
-            .await
-            .map_err(Error::Io)?;
-
-        println!("Received: {} -> {:?}", count, read_buffer);
-
-        let connection_response = krpc::ConnectionResponse::parse_from_bytes(&mut read_buffer)
-            .map_err(Error::Protobuf)?;
+        let connection_response =
+            codec::read_message::<krpc::ConnectionResponse>(&mut socket_reader).await?;
 
         println!("Connection response: {:?}", connection_response);
 
         Ok(Self {})
     }
 
-    pub async fn request<T: codec::RPCExtractable>(&self, call: &CallHandle<T>) -> Result<T> {
-        // Make a copy of the call
-        let call = call.clone();
-
-        // Create a request
-        let mut request = RPCRequest::new();
-        request.add_call(call);
-
-        // Encode the request
-        let encoded_request: Vec<u8> = request
-            .build()
-            .write_length_delimited_to_bytes()
-            .map_err(Error::Protobuf)?;
-
-        // temporary fake socket
-        let socket = tokio::net::TcpStream::connect("127.0.0.1:50000")
-            .await
-            .map_err(Error::Io)?;
-
-        let (mut reader, mut writer) = socket.into_split();
-        writer
-            .write_all(&encoded_request)
-            .await
-            .map_err(Error::Io)?;
-
-        let mut read_buffer = bytes::BytesMut::new();
-        let count: usize = reader.read_buf(&mut read_buffer).await.map_err(Error::Io)?;
-
-        let result = krpc::ProcedureResult::parse_from_bytes(&read_buffer).unwrap();
-        let fake_result = krpc::ProcedureResult::default();
-        call.get_result(&fake_result)
-    }
+    // pub async fn request<T: codec::RPCExtractable>(&self, call: &CallHandle<T>) -> Result<T> {
+    //     // Make a copy of the call
+    //     let call = call.clone();
+    //
+    //     // Create a request
+    //     let mut request = RPCRequest::new();
+    //     request.add_call(call);
+    //
+    //     // Encode the request
+    //     let mut buf = BytesMut::new();
+    //     request
+    //         .build()
+    //         .encode(&mut buf)
+    //         .map_err(Error::EncodeError)?;
+    //
+    //     // temporary fake socket
+    //     let socket = tokio::net::TcpStream::connect("127.0.0.1:50000")
+    //         .await
+    //         .map_err(Error::Io)?;
+    //
+    //     let (mut reader, mut writer) = socket.into_split();
+    //     writer.write_all(&buf).await.map_err(Error::Io)?;
+    //
+    //     let mut read_buffer = BytesMut::new();
+    //     let _count: usize = reader.read_buf(&mut read_buffer).await.map_err(Error::Io)?;
+    //
+    //     let result = krpc::ProcedureResult::decode(read_buffer).map_err(Error::DecodeError)?;
+    //     call.get_result(&result)
+    // }
 }
 
 impl RPCRequest {
     pub fn new() -> Self {
         RPCRequest {
-            calls: protobuf::RepeatedField::<krpc::ProcedureCall>::new(),
+            calls: Vec::<krpc::ProcedureCall>::new(),
         }
     }
 
@@ -322,9 +201,7 @@ impl RPCRequest {
     }
 
     fn build(self) -> krpc::Request {
-        let mut req = krpc::Request::new();
-        req.set_calls(self.calls);
-        req
+        krpc::Request { calls: self.calls }
     }
 }
 
@@ -339,9 +216,9 @@ where
         }
     }
 
-    pub fn to_stream(&self) -> CallHandle<StreamHandle<T>> {
-        mk_stream(self)
-    }
+    // pub fn to_stream(&self) -> CallHandle<StreamHandle<T>> {
+    //     mk_stream(self)
+    // }
 
     pub fn get_result(&self, result: &krpc::ProcedureResult) -> Result<T> {
         codec::extract_result(result)
@@ -352,42 +229,45 @@ where
     }
 }
 
-impl<T> StreamHandle<T> {
-    pub fn new(stream_id: StreamID) -> Self {
-        StreamHandle {
-            stream_id,
-            _phantom: PhantomData,
-        }
-    }
-
-    pub fn remove(self) -> CallHandle<()> {
-        use codec::RPCEncodable;
-
-        let mut arg = krpc::Argument::new();
-        arg.set_position(0);
-        arg.set_value(self.stream_id.encode_to_bytes().unwrap());
-
-        let mut arguments = protobuf::RepeatedField::<krpc::Argument>::new();
-        arguments.push(arg);
-
-        let mut proc_call = krpc::ProcedureCall::new();
-        proc_call.set_service(String::from("KRPC"));
-        proc_call.set_procedure(String::from("RemoveStream"));
-        proc_call.set_arguments(arguments);
-
-        CallHandle::<()>::new(proc_call)
-    }
-}
-
-impl StreamUpdate {
-    pub fn get_result<T>(&self, handle: &StreamHandle<T>) -> Result<T>
-    where
-        T: codec::RPCExtractable,
-    {
-        let result = self
-            .updates
-            .get(&handle.stream_id)
-            .ok_or(Error::NoSuchStream)?;
-        codec::extract_result(&result)
-    }
-}
+// impl<T> StreamHandle<T> {
+//     pub fn new(stream_id: StreamID) -> Self {
+//         StreamHandle {
+//             stream_id,
+//             _phantom: PhantomData,
+//         }
+//     }
+//
+//     pub fn remove(self) -> CallHandle<()> {
+//         use codec::RPCEncodable;
+//
+//         let arg = krpc::Argument {
+//             position: 0,
+//             value: self.stream_id.encode_to_bytes().unwrap(),
+//         };
+//
+//         let mut arguments = Vec::<krpc::Argument>::new();
+//         arguments.push(arg);
+//
+//         let proc_call = krpc::ProcedureCall {
+//             service: "KRPC".to_string(),
+//             procedure: "RemoveStream".to_string(),
+//             arguments,
+//             ..Default::default()
+//         };
+//
+//         CallHandle::<()>::new(proc_call)
+//     }
+// }
+//
+// impl StreamUpdate {
+//     pub fn get_result<T>(&self, handle: &StreamHandle<T>) -> Result<T>
+//     where
+//         T: codec::RPCExtractable,
+//     {
+//         let result = self
+//             .updates
+//             .get(&handle.stream_id)
+//             .ok_or(Error::NoSuchStream)?;
+//         codec::extract_result(&result)
+//     }
+// }

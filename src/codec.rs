@@ -1,118 +1,96 @@
 use crate::error::Error;
 use crate::krpc;
 
-use protobuf;
-use protobuf::Message;
+use prost;
+use prost::Message;
 
+use bytes::BytesMut;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::hash::Hash;
-use std::io::Read;
+use tokio::io::AsyncReadExt;
 
 pub trait RPCExtractable: Sized {
-    fn extract_value(
-        input: &mut protobuf::CodedInputStream,
-    ) -> Result<Self, protobuf::ProtobufError>;
+    fn extract_value(input: &mut BytesMut) -> Result<Self, prost::DecodeError>;
 }
 
 impl RPCExtractable for bool {
-    fn extract_value(
-        input: &mut protobuf::CodedInputStream,
-    ) -> Result<Self, protobuf::ProtobufError> {
-        input.read_bool()
+    fn extract_value(mut input: &mut BytesMut) -> Result<Self, prost::DecodeError> {
+        Message::decode(&mut input)
     }
 }
 
 impl RPCExtractable for () {
-    fn extract_value(
-        _input: &mut protobuf::CodedInputStream,
-    ) -> Result<Self, protobuf::ProtobufError> {
-        Ok(())
+    fn extract_value(mut input: &mut BytesMut) -> Result<Self, prost::DecodeError> {
+        Message::decode(&mut input)
     }
 }
 
 impl RPCExtractable for f64 {
-    fn extract_value(
-        input: &mut protobuf::CodedInputStream,
-    ) -> Result<Self, protobuf::ProtobufError> {
-        input.read_double()
+    fn extract_value(mut input: &mut BytesMut) -> Result<Self, prost::DecodeError> {
+        Message::decode(&mut input)
     }
 }
 
 impl RPCExtractable for f32 {
-    fn extract_value(
-        input: &mut protobuf::CodedInputStream,
-    ) -> Result<Self, protobuf::ProtobufError> {
-        input.read_float()
+    fn extract_value(mut input: &mut BytesMut) -> Result<Self, prost::DecodeError> {
+        Message::decode(&mut input)
     }
 }
 
 impl RPCExtractable for u64 {
-    fn extract_value(
-        input: &mut protobuf::CodedInputStream,
-    ) -> Result<Self, protobuf::ProtobufError> {
-        input.read_uint64()
+    fn extract_value(mut input: &mut BytesMut) -> Result<Self, prost::DecodeError> {
+        Message::decode(&mut input)
     }
 }
 
 impl RPCExtractable for u32 {
-    fn extract_value(
-        input: &mut protobuf::CodedInputStream,
-    ) -> Result<Self, protobuf::ProtobufError> {
-        input.read_uint32()
+    fn extract_value(mut input: &mut BytesMut) -> Result<Self, prost::DecodeError> {
+        Message::decode(&mut input)
     }
 }
 
 impl RPCExtractable for i64 {
-    fn extract_value(
-        input: &mut protobuf::CodedInputStream,
-    ) -> Result<Self, protobuf::ProtobufError> {
-        input.read_sint64()
+    fn extract_value(mut input: &mut BytesMut) -> Result<Self, prost::DecodeError> {
+        Message::decode(&mut input)
     }
 }
 
 impl RPCExtractable for i32 {
-    fn extract_value(
-        input: &mut protobuf::CodedInputStream,
-    ) -> Result<Self, protobuf::ProtobufError> {
-        input.read_sint32()
+    fn extract_value(mut input: &mut BytesMut) -> Result<Self, prost::DecodeError> {
+        Message::decode(&mut input)
     }
 }
 
 impl RPCExtractable for String {
-    fn extract_value(
-        input: &mut protobuf::CodedInputStream,
-    ) -> Result<Self, protobuf::ProtobufError> {
-        input.read_string()
+    fn extract_value(mut input: &mut BytesMut) -> Result<Self, prost::DecodeError> {
+        Message::decode(&mut input)
     }
 }
 
-impl<T> RPCExtractable for super::StreamHandle<T>
-where
-    T: RPCExtractable,
-{
-    fn extract_value(
-        input: &mut protobuf::CodedInputStream,
-    ) -> Result<Self, protobuf::ProtobufError> {
-        let mut stream = krpc::Stream::new();
-        stream.merge_from(input)?;
-        Ok(super::StreamHandle::new(stream.id))
-    }
-}
+// impl<T> RPCExtractable for super::StreamHandle<T>
+// where
+//     T: RPCExtractable,
+// {
+//     fn extract_value(
+//         input: &mut Vec<u8>,
+//     ) -> Result<Self, prost::DecodeError> {
+//         let mut stream = krpc::Stream::new();
+//         stream.merge_from(input)?;
+//         Ok(super::StreamHandle::new(stream.id))
+//     }
+// }
 
 impl<T> RPCExtractable for Vec<T>
 where
     T: RPCExtractable,
 {
-    fn extract_value(
-        input: &mut protobuf::CodedInputStream,
-    ) -> Result<Self, protobuf::ProtobufError> {
-        let mut m = krpc::List::new();
-        m.merge_from(input)?;
+    fn extract_value(mut input: &mut BytesMut) -> Result<Self, prost::DecodeError> {
+        let m = krpc::List::decode(input)?;
 
         let mut v = Vec::with_capacity(m.items.len());
-        for item in &m.items {
-            let mut i = protobuf::CodedInputStream::from_bytes(&item);
+        for item in m.items {
+            let mut i = BytesMut::from(item.as_slice());
             v.push(RPCExtractable::extract_value(&mut i)?);
         }
 
@@ -124,15 +102,12 @@ impl<T> RPCExtractable for HashSet<T>
 where
     T: RPCExtractable + Hash + Eq,
 {
-    fn extract_value(
-        input: &mut protobuf::CodedInputStream,
-    ) -> Result<Self, protobuf::ProtobufError> {
-        let mut m = krpc::Set::new();
-        m.merge_from(input)?;
+    fn extract_value(mut input: &mut BytesMut) -> Result<Self, prost::DecodeError> {
+        let m = krpc::Set::decode(input)?;
 
         let mut s = HashSet::with_capacity(m.items.len());
-        for item in &m.items {
-            let mut i = protobuf::CodedInputStream::from_bytes(&item);
+        for item in m.items {
+            let mut i = BytesMut::from(item.as_slice());
             s.insert(RPCExtractable::extract_value(&mut i)?);
         }
 
@@ -145,16 +120,13 @@ where
     T: RPCExtractable + Hash + Eq,
     U: RPCExtractable,
 {
-    fn extract_value(
-        input: &mut protobuf::CodedInputStream,
-    ) -> Result<Self, protobuf::ProtobufError> {
-        let mut m = krpc::Dictionary::new();
-        m.merge_from(input)?;
+    fn extract_value(mut input: &mut BytesMut) -> Result<Self, prost::DecodeError> {
+        let m = krpc::Dictionary::decode(input)?;
 
         let mut h = HashMap::with_capacity(m.entries.len());
-        for entry in &m.entries {
-            let mut i_k = protobuf::CodedInputStream::from_bytes(&entry.key);
-            let mut i_v = protobuf::CodedInputStream::from_bytes(&entry.value);
+        for entry in m.entries {
+            let mut i_k = BytesMut::from(entry.key.as_slice());
+            let mut i_v = BytesMut::from(entry.value.as_slice());
             let key = RPCExtractable::extract_value(&mut i_k)?;
             let val = RPCExtractable::extract_value(&mut i_v)?;
             h.insert(key, val);
@@ -169,17 +141,10 @@ where
     T: RPCExtractable,
     U: RPCExtractable,
 {
-    fn extract_value(
-        input: &mut protobuf::CodedInputStream,
-    ) -> Result<Self, protobuf::ProtobufError> {
-        let mut l = krpc::Tuple::new();
-        l.merge_from(input)?;
-        let t = RPCExtractable::extract_value(&mut protobuf::CodedInputStream::from_bytes(
-            &l.items[0],
-        ))?;
-        let u = RPCExtractable::extract_value(&mut protobuf::CodedInputStream::from_bytes(
-            &l.items[1],
-        ))?;
+    fn extract_value(mut input: &mut BytesMut) -> Result<Self, prost::DecodeError> {
+        let l = krpc::Tuple::decode(input)?;
+        let t = RPCExtractable::extract_value(&mut BytesMut::from(l.items[0].as_slice()))?;
+        let u = RPCExtractable::extract_value(&mut BytesMut::from(l.items[1].as_slice()))?;
         Ok((t, u))
     }
 }
@@ -190,20 +155,11 @@ where
     U: RPCExtractable,
     V: RPCExtractable,
 {
-    fn extract_value(
-        input: &mut protobuf::CodedInputStream,
-    ) -> Result<Self, protobuf::ProtobufError> {
-        let mut l = krpc::Tuple::new();
-        l.merge_from(input)?;
-        let t = RPCExtractable::extract_value(&mut protobuf::CodedInputStream::from_bytes(
-            &l.items[0],
-        ))?;
-        let u = RPCExtractable::extract_value(&mut protobuf::CodedInputStream::from_bytes(
-            &l.items[1],
-        ))?;
-        let v = RPCExtractable::extract_value(&mut protobuf::CodedInputStream::from_bytes(
-            &l.items[2],
-        ))?;
+    fn extract_value(mut input: &mut BytesMut) -> Result<Self, prost::DecodeError> {
+        let l = krpc::Tuple::decode(input)?;
+        let t = RPCExtractable::extract_value(&mut BytesMut::from(l.items[0].as_slice()))?;
+        let u = RPCExtractable::extract_value(&mut BytesMut::from(l.items[1].as_slice()))?;
+        let v = RPCExtractable::extract_value(&mut BytesMut::from(l.items[2].as_slice()))?;
         Ok((t, u, v))
     }
 }
@@ -215,112 +171,72 @@ where
     V: RPCExtractable,
     W: RPCExtractable,
 {
-    fn extract_value(
-        input: &mut protobuf::CodedInputStream,
-    ) -> Result<Self, protobuf::ProtobufError> {
-        let mut l = krpc::Tuple::new();
-        l.merge_from(input)?;
-        let t = RPCExtractable::extract_value(&mut protobuf::CodedInputStream::from_bytes(
-            &l.items[0],
-        ))?;
-        let u = RPCExtractable::extract_value(&mut protobuf::CodedInputStream::from_bytes(
-            &l.items[1],
-        ))?;
-        let v = RPCExtractable::extract_value(&mut protobuf::CodedInputStream::from_bytes(
-            &l.items[2],
-        ))?;
-        let w = RPCExtractable::extract_value(&mut protobuf::CodedInputStream::from_bytes(
-            &l.items[3],
-        ))?;
+    fn extract_value(mut input: &mut BytesMut) -> Result<Self, prost::DecodeError> {
+        let l = krpc::Tuple::decode(input)?;
+        let t = RPCExtractable::extract_value(&mut BytesMut::from(l.items[0].as_slice()))?;
+        let u = RPCExtractable::extract_value(&mut BytesMut::from(l.items[1].as_slice()))?;
+        let v = RPCExtractable::extract_value(&mut BytesMut::from(l.items[2].as_slice()))?;
+        let w = RPCExtractable::extract_value(&mut BytesMut::from(l.items[3].as_slice()))?;
         Ok((t, u, v, w))
     }
 }
 
 pub trait RPCEncodable {
-    fn encode(
-        &self,
-        output: &mut protobuf::CodedOutputStream,
-    ) -> Result<(), protobuf::ProtobufError>;
-    fn encode_to_bytes(&self) -> Result<Vec<u8>, protobuf::ProtobufError> {
-        let mut bytes = Vec::new();
+    fn encode(&self, output: &mut BytesMut) -> Result<(), prost::EncodeError>;
+    fn encode_to_bytes(&self) -> Result<Vec<u8>, prost::EncodeError> {
+        let mut bytes = BytesMut::new();
         {
-            let mut output = protobuf::CodedOutputStream::new(&mut bytes);
-            self.encode(&mut output)?;
-            output.flush()?;
+            self.encode(&mut bytes)?;
         }
-        Ok(bytes)
+        Ok(bytes.to_vec())
     }
 }
 
 impl RPCEncodable for bool {
-    fn encode(
-        &self,
-        output: &mut protobuf::CodedOutputStream,
-    ) -> Result<(), protobuf::ProtobufError> {
-        output.write_bool_no_tag(*self)
+    fn encode(&self, mut output: &mut BytesMut) -> Result<(), prost::EncodeError> {
+        Message::encode(self, &mut output)
     }
 }
 
 impl RPCEncodable for f64 {
-    fn encode(
-        &self,
-        output: &mut protobuf::CodedOutputStream,
-    ) -> Result<(), protobuf::ProtobufError> {
-        output.write_double_no_tag(*self)
+    fn encode(&self, mut output: &mut BytesMut) -> Result<(), prost::EncodeError> {
+        Message::encode(self, &mut output)
     }
 }
 
 impl RPCEncodable for f32 {
-    fn encode(
-        &self,
-        output: &mut protobuf::CodedOutputStream,
-    ) -> Result<(), protobuf::ProtobufError> {
-        output.write_float_no_tag(*self)
+    fn encode(&self, mut output: &mut BytesMut) -> Result<(), prost::EncodeError> {
+        Message::encode(self, &mut output)
     }
 }
 
 impl RPCEncodable for u32 {
-    fn encode(
-        &self,
-        output: &mut protobuf::CodedOutputStream,
-    ) -> Result<(), protobuf::ProtobufError> {
-        output.write_uint32_no_tag(*self)
+    fn encode(&self, mut output: &mut BytesMut) -> Result<(), prost::EncodeError> {
+        Message::encode(self, &mut output)
     }
 }
 
 impl RPCEncodable for i32 {
-    fn encode(
-        &self,
-        output: &mut protobuf::CodedOutputStream,
-    ) -> Result<(), protobuf::ProtobufError> {
-        output.write_sint32_no_tag(*self)
+    fn encode(&self, mut output: &mut BytesMut) -> Result<(), prost::EncodeError> {
+        Message::encode(self, &mut output)
     }
 }
 
 impl RPCEncodable for u64 {
-    fn encode(
-        &self,
-        output: &mut protobuf::CodedOutputStream,
-    ) -> Result<(), protobuf::ProtobufError> {
-        output.write_uint64_no_tag(*self)
+    fn encode(&self, mut output: &mut BytesMut) -> Result<(), prost::EncodeError> {
+        Message::encode(self, &mut output)
     }
 }
 
 impl RPCEncodable for i64 {
-    fn encode(
-        &self,
-        output: &mut protobuf::CodedOutputStream,
-    ) -> Result<(), protobuf::ProtobufError> {
-        output.write_sint64_no_tag(*self)
+    fn encode(&self, mut output: &mut BytesMut) -> Result<(), prost::EncodeError> {
+        Message::encode(self, &mut output)
     }
 }
 
 impl RPCEncodable for String {
-    fn encode(
-        &self,
-        output: &mut protobuf::CodedOutputStream,
-    ) -> Result<(), protobuf::ProtobufError> {
-        output.write_string_no_tag(self)
+    fn encode(&self, mut output: &mut BytesMut) -> Result<(), prost::EncodeError> {
+        Message::encode(self, &mut output)
     }
 }
 
@@ -328,18 +244,14 @@ impl<T> RPCEncodable for Vec<T>
 where
     T: RPCEncodable,
 {
-    fn encode(
-        &self,
-        output: &mut protobuf::CodedOutputStream,
-    ) -> Result<(), protobuf::ProtobufError> {
-        let mut v = protobuf::RepeatedField::<Vec<u8>>::new();
+    fn encode(&self, mut output: &mut BytesMut) -> Result<(), prost::EncodeError> {
+        let mut v = Vec::<Vec<u8>>::new();
         for e in self {
             v.push(e.encode_to_bytes()?);
         }
 
-        let mut l = krpc::List::new();
-        l.set_items(v);
-        l.write_to(output)?;
+        let l = krpc::List { items: v };
+        l.encode(&mut output)?;
 
         Ok(())
     }
@@ -350,15 +262,12 @@ where
     T: RPCEncodable,
     U: RPCEncodable,
 {
-    fn encode(
-        &self,
-        output: &mut protobuf::CodedOutputStream,
-    ) -> Result<(), protobuf::ProtobufError> {
+    fn encode(&self, mut output: &mut BytesMut) -> Result<(), prost::EncodeError> {
         let &(ref t, ref u) = self;
-        let mut tuple = krpc::Tuple::new();
-        tuple.items.push(t.encode_to_bytes()?);
-        tuple.items.push(u.encode_to_bytes()?);
-        tuple.write_to(output)?;
+        let tuple = krpc::Tuple {
+            items: vec![t.encode_to_bytes()?, u.encode_to_bytes()?],
+        };
+        tuple.encode(&mut output)?;
         Ok(())
     }
 }
@@ -369,16 +278,16 @@ where
     U: RPCEncodable,
     V: RPCEncodable,
 {
-    fn encode(
-        &self,
-        output: &mut protobuf::CodedOutputStream,
-    ) -> Result<(), protobuf::ProtobufError> {
+    fn encode(&self, mut output: &mut BytesMut) -> Result<(), prost::EncodeError> {
         let &(ref t, ref u, ref v) = self;
-        let mut tuple = krpc::Tuple::new();
-        tuple.items.push(t.encode_to_bytes()?);
-        tuple.items.push(u.encode_to_bytes()?);
-        tuple.items.push(v.encode_to_bytes()?);
-        tuple.write_to(output)?;
+        let tuple = krpc::Tuple {
+            items: vec![
+                t.encode_to_bytes()?,
+                u.encode_to_bytes()?,
+                v.encode_to_bytes()?,
+            ],
+        };
+        tuple.encode(&mut output)?;
         Ok(())
     }
 }
@@ -390,37 +299,39 @@ where
     V: RPCEncodable,
     W: RPCEncodable,
 {
-    fn encode(
-        &self,
-        output: &mut protobuf::CodedOutputStream,
-    ) -> Result<(), protobuf::ProtobufError> {
+    fn encode(&self, mut output: &mut BytesMut) -> Result<(), prost::EncodeError> {
         let &(ref t, ref u, ref v, ref w) = self;
-        let mut tuple = krpc::Tuple::new();
-        tuple.items.push(t.encode_to_bytes()?);
-        tuple.items.push(u.encode_to_bytes()?);
-        tuple.items.push(v.encode_to_bytes()?);
-        tuple.items.push(w.encode_to_bytes()?);
-        tuple.write_to(output)?;
+        let tuple = krpc::Tuple {
+            items: vec![
+                t.encode_to_bytes()?,
+                u.encode_to_bytes()?,
+                v.encode_to_bytes()?,
+                w.encode_to_bytes()?,
+            ],
+        };
+        tuple.encode(&mut output)?;
         Ok(())
     }
 }
 
-pub fn read_message<M>(sock: &mut dyn Read) -> Result<M, protobuf::ProtobufError>
+pub async fn read_message<M>(socket_reader: &mut tokio::net::tcp::OwnedReadHalf) -> Result<M, Error>
 where
-    M: protobuf::Message,
+    M: prost::Message + Default + std::fmt::Debug,
 {
-    let mut input_stream = protobuf::CodedInputStream::new(sock);
-    M::parse_from(&mut input_stream)
+    let mut buf = BytesMut::new();
+    socket_reader.read_buf(&mut buf).await.map_err(Error::Io)?;
+    M::decode(buf).map_err(Error::DecodeError)
 }
 
 pub fn extract_result<T>(proc_result: &krpc::ProcedureResult) -> Result<T, Error>
 where
     T: RPCExtractable,
 {
-    if proc_result.has_error() {
-        Err(Error::Procedure(proc_result.get_error().clone()))
+    let proc_result = proc_result.clone();
+    if let Some(error) = proc_result.error {
+        Err(Error::Procedure(error))
     } else {
-        let mut input = protobuf::CodedInputStream::from_bytes(proc_result.get_value());
-        RPCExtractable::extract_value(&mut input).map_err(Error::Protobuf)
+        let mut input = BytesMut::from(proc_result.value.as_slice());
+        RPCExtractable::extract_value(&mut input).map_err(Error::DecodeError)
     }
 }

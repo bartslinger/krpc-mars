@@ -3,20 +3,19 @@ use std::io;
 use std::result;
 
 use crate::krpc;
-use protobuf;
 
 #[derive(Debug)]
 pub enum Error {
     /// Raised when the connection to the RPC server fails.
     RPCConnect {
         error: String,
-        status: krpc::ConnectionResponse_Status,
+        status: krpc::connection_response::Status,
     },
 
     /// Raised when the connection to the stream server fails.
     StreamConnect {
         error: String,
-        status: krpc::ConnectionResponse_Status,
+        status: krpc::connection_response::Status,
     },
 
     /// A synchronization error. Mutexes are used to ensure that responses are not mixed together
@@ -33,7 +32,8 @@ pub enum Error {
     Procedure(krpc::Error),
 
     /// Serialization/deserialization error.
-    Protobuf(protobuf::ProtobufError),
+    EncodeError(prost::EncodeError),
+    DecodeError(prost::DecodeError),
 
     /// Error returned when an attempt is made to extract a value from a stream with no result for
     /// the given stream handle.
@@ -77,21 +77,20 @@ impl fmt::Display for Error {
                 write!(
                     f,
                     "The RPC request failed: service={} procedure={} description={}",
-                    err.get_service(),
-                    err.get_name(),
-                    err.get_description()
+                    err.service, err.name, err.description,
                 )
             }
             Error::Procedure(ref err) => {
                 write!(
                     f,
                     "The RPC failed: service={} procedure={} description={}",
-                    err.get_service(),
-                    err.get_name(),
-                    err.get_description()
+                    err.service, err.name, err.description,
                 )
             }
-            Error::Protobuf(ref err) => {
+            Error::EncodeError(ref err) => {
+                write!(f, "Protobuf error: {}", err)
+            }
+            Error::DecodeError(ref err) => {
                 write!(f, "Protobuf error: {}", err)
             }
             Error::NoSuchStream => {
