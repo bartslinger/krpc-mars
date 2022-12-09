@@ -1,4 +1,6 @@
 pub extern crate protobuf;
+use bytes::BufMut;
+use protobuf::CodedInputStream;
 use protobuf::Message;
 
 pub mod codec;
@@ -13,6 +15,8 @@ use std::net::TcpStream;
 use std::net::ToSocketAddrs;
 use std::sync::Arc;
 use std::sync::Mutex;
+
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 #[derive(Debug)]
 struct RPCClient_ {
@@ -34,6 +38,9 @@ struct StreamClient_ {
 pub struct StreamClient(Arc<StreamClient_>);
 
 type StreamID = u64;
+
+/// An async client to a RPC server.
+pub struct AsyncRPCClient {}
 
 #[doc(hidden)]
 /// Represents a request that can be submitted to the RPCServer. Library users should not have to
@@ -227,6 +234,79 @@ impl StreamClient {
         }
 
         Ok(StreamUpdate { updates: map })
+    }
+}
+
+impl AsyncRPCClient {
+    pub async fn connect(client_name: &str, addr: impl tokio::net::ToSocketAddrs) -> Result<Self> {
+        let socket = tokio::net::TcpStream::connect(addr)
+            .await
+            .map_err(Error::Io)?;
+
+        let (mut socket_reader, mut socket_writer) = socket.into_split();
+
+        // Create a connection request
+        let mut conn_req = krpc::ConnectionRequest::new();
+        conn_req.set_field_type(krpc::ConnectionRequest_Type::RPC);
+        conn_req.set_client_name(client_name.to_string());
+
+        let encoded_req = conn_req
+            .write_length_delimited_to_bytes()
+            .map_err(Error::Protobuf)?;
+
+        socket_writer
+            .write_all(&encoded_req)
+            .await
+            .map_err(Error::Io)?;
+
+        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+        let mut read_buffer = bytes::BytesMut::new();
+        let count = socket_reader
+            .read_buf(&mut read_buffer)
+            .await
+            .map_err(Error::Io)?;
+
+        println!("Received: {} -> {:?}", count, read_buffer);
+
+        let connection_response = krpc::ConnectionResponse::parse_from_bytes(&mut read_buffer)
+            .map_err(Error::Protobuf)?;
+
+        println!("Connection response: {:?}", connection_response);
+
+        Ok(Self {})
+    }
+
+    pub async fn request<T: codec::RPCExtractable>(&self, call: &CallHandle<T>) -> Result<T> {
+        // Make a copy of the call
+        let call = call.clone();
+
+        // Create a request
+        let mut request = RPCRequest::new();
+        request.add_call(call);
+
+        // Encode the request
+        let encoded_request: Vec<u8> = request
+            .build()
+            .write_length_delimited_to_bytes()
+            .map_err(Error::Protobuf)?;
+
+        // temporary fake socket
+        let socket = tokio::net::TcpStream::connect("127.0.0.1:50000")
+            .await
+            .map_err(Error::Io)?;
+
+        let (mut reader, mut writer) = socket.into_split();
+        writer
+            .write_all(&encoded_request)
+            .await
+            .map_err(Error::Io)?;
+
+        let mut read_buffer = bytes::BytesMut::new();
+        let count: usize = reader.read_buf(&mut read_buffer).await.map_err(Error::Io)?;
+
+        let result = krpc::ProcedureResult::parse_from_bytes(&read_buffer).unwrap();
+        let fake_result = krpc::ProcedureResult::default();
+        call.get_result(&fake_result)
     }
 }
 
